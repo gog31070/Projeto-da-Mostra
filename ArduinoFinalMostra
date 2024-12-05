@@ -1,0 +1,113 @@
+// Configurações Blynk
+#define BLYNK_TEMPLATE_ID "TMPL2k-gning0"
+#define BLYNK_TEMPLATE_NAME "Quickstart Template"
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// Definições dos pinos
+#define PINO_SENSOR_UMIDADE 34
+#define PINO_RELE_BOMBA_IRRIGACAO 18
+#define PINO_RELE_BOMBA_RETORNO 19
+#define PINO_SENSOR_TEMPERATURA 32
+
+// Configurações de umidade e temperatura
+int umidadeMinima = 40;
+int umidadeMaxima = 60;
+float temperaturaMaxima = 30.0;
+float temperaturaMinima = 5.0;
+int umidadeAtual;
+float temperaturaAtual;
+
+// Conexão Wi-Fi e Blynk
+char auth[] = "3sk0wv4dQy6zzVHn8hNKJ7VF8YxC-3-b"; 
+char ssid[] = "UaiFai"; 
+char pass[] = "zicu1812"; 
+
+BlynkTimer timer;
+OneWire oneWire(PINO_SENSOR_TEMPERATURA);
+DallasTemperature sensors(&oneWire);
+
+// Variáveis de controle
+bool bombaIrrigacaoLigada = false;
+
+// Função para reconectar o Wi-Fi
+void verificaConexaoWiFi() {
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.begin(ssid, pass);
+    while (WiFi.status() != WL_CONNECTED) delay(500);
+    Blynk.connect();
+  }
+}
+
+// Função para monitorar e atualizar a umidade
+void checarUmidade() {
+  umidadeAtual = analogRead(PINO_SENSOR_UMIDADE);
+  int umidadePercentual = map(umidadeAtual, 4095, 0, 0, 100);
+  Blynk.virtualWrite(V9, umidadePercentual);
+
+  // Controle da bomba de irrigação e da bomba de retorno
+  if (umidadePercentual < umidadeMinima && temperaturaAtual <= temperaturaMaxima && temperaturaAtual >= temperaturaMinima) {
+    if (!bombaIrrigacaoLigada) {
+      digitalWrite(PINO_RELE_BOMBA_RETORNO, HIGH);    // Garante que a bomba de retorno está desligada
+      digitalWrite(PINO_RELE_BOMBA_IRRIGACAO, LOW);   // Liga a bomba de irrigação
+      bombaIrrigacaoLigada = true;                    // Define que a bomba de irrigação está ligada
+      Blynk.logEvent("umidade_baixa", "Umidade baixa! Acionando bomba de irrigação.");
+    }
+  } 
+  else if (umidadePercentual >= umidadeMaxima && bombaIrrigacaoLigada) {
+    digitalWrite(PINO_RELE_BOMBA_IRRIGACAO, HIGH);    // Desliga a bomba de irrigação
+    bombaIrrigacaoLigada = false;                     // Atualiza o estado para desligado
+
+    // Liga a bomba de retorno por 30 segundos
+    digitalWrite(PINO_RELE_BOMBA_RETORNO, LOW);       // Liga a bomba de retorno
+    Blynk.logEvent("umidade_excedente", "Umidade acima do limite! Ativando bomba de retorno por 30 segundos.");
+    delay(30000);                                     // Espera 30 segundos com a bomba de retorno ligada
+    digitalWrite(PINO_RELE_BOMBA_RETORNO, HIGH);      // Desliga a bomba de retorno
+    Serial.println("Bomba de retorno desligada após 30 segundos.");
+  }
+  else if (umidadePercentual >= umidadeMinima && umidadePercentual <= umidadeMaxima) {
+    // Se a umidade estiver no intervalo, garante que ambas as bombas estejam desligadas
+    digitalWrite(PINO_RELE_BOMBA_IRRIGACAO, HIGH); 
+    digitalWrite(PINO_RELE_BOMBA_RETORNO, HIGH); 
+    bombaIrrigacaoLigada = false;
+  }
+}
+
+// Função para monitorar a temperatura e atualizar no Blynk
+void checarTemperatura() {
+  sensors.requestTemperatures();
+  temperaturaAtual = sensors.getTempCByIndex(0);
+  Blynk.virtualWrite(V5, temperaturaAtual);
+}
+
+// Funções para ajustar configurações via Blynk
+BLYNK_WRITE(V6) { umidadeMinima = param.asInt(); }
+BLYNK_WRITE(V7) { umidadeMaxima = param.asInt(); }
+BLYNK_WRITE(V8) { temperaturaMaxima = param.asFloat(); }
+
+// Configuração inicial
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, pass);
+  Blynk.begin(auth, ssid, pass);
+  
+  pinMode(PINO_SENSOR_UMIDADE, INPUT);
+  pinMode(PINO_RELE_BOMBA_IRRIGACAO, OUTPUT);
+  pinMode(PINO_RELE_BOMBA_RETORNO, OUTPUT);
+  
+  digitalWrite(PINO_RELE_BOMBA_IRRIGACAO, HIGH);  // Deixa a bomba de irrigação desligada inicialmente
+  digitalWrite(PINO_RELE_BOMBA_RETORNO, HIGH);    // Deixa a bomba de retorno desligada inicialmente
+
+  sensors.begin();
+  
+  timer.setInterval(2000L, checarUmidade);
+  timer.setInterval(2000L, checarTemperatura);
+}
+
+void loop() {
+  Blynk.run();
+  timer.run();
+  verificaConexaoWiFi();
+}
